@@ -601,7 +601,7 @@ func (a *App) entryForEdit(id, langID int64) *models.Entry {
 
 func (a *App) adminPost(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 6<<20)
-	if err := r.ParseMultipartForm(5 << 20); err != nil {
+	if err := r.ParseMultipartForm(5 << 20); err != nil && !errors.Is(err, http.ErrNotMultipart) {
 		a.badRequest(w)
 		return
 	}
