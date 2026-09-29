@@ -33,6 +33,16 @@ func Write(w io.Writer, r models.Resume, fontPath, uploadPath string) error {
 	} else {
 		p.SetTextColor(25, 31, 29)
 	}
+	if r.Profile.Avatar != "" {
+		img := filepath.Join(uploadPath, filepath.Base(r.Profile.Avatar))
+		if _, err := os.Stat(img); err == nil {
+			x := 166.0
+			if r.Language.Direction == "rtl" {
+				x = 18
+			}
+			p.ImageOptions(img, x, 9, 26, 30, false, fpdf.ImageOptions{ReadDpi: true}, 0, "")
+		}
+	}
 	p.SetFont(family, "", 24)
 	p.CellFormat(0, 10, r.Profile.Name, "", 1, align(r), false, 0, "")
 	p.SetFont(family, "", 12)

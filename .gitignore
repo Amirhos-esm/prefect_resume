@@ -1,10 +1,12 @@
 /data/*.db*
 /uploads/*
 !/uploads/.gitkeep
+!/uploads/mock-*.png
 /.env
 /resume
 /resume.exe
 /*.exe
+/*.log
 /resume.db
 /verify-*.txt
 /verify-*.html

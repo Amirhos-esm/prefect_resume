@@ -20,7 +20,7 @@ go run ./cmd/server --seed
 go run ./cmd/server
 ```
 
-The `--seed` command is optional. It adds English, German, and Persian demo translations and a few example records. It is safe to omit. Open `http://localhost:8080/admin/login` to edit the resume.
+The `--seed` command is optional. It adds a complete fictional English and Persian resume with experience, education, skills, projects, certifications, spoken languages, social links, a profile portrait, and project imagery. It is safe to omit and idempotent. Open `http://localhost:8080/admin/login` to edit the resume.
 
 Environment variables are not automatically loaded from `.env`; export them in your shell or use Docker Compose. This avoids adding a configuration dependency.
 

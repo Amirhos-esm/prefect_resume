@@ -142,6 +142,10 @@ func createAdmin(db *sql.DB, user, pass string) error {
 	return nil
 }
 func seedDemo(db *sql.DB) error {
+	if database.Setting(db, "demo_seed_version") == "3" {
+		fmt.Println("demo data is already up to date")
+		return nil
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -150,12 +154,15 @@ func seedDemo(db *sql.DB) error {
 	langs := []struct {
 		c, n, nn, d string
 		o           int
-	}{{"en", "English", "English", "ltr", 1}, {"de", "German", "Deutsch", "ltr", 2}, {"fa", "Persian", "فارسی", "rtl", 3}}
+	}{{"en", "English", "English", "ltr", 1}, {"fa", "Persian", "فارسی", "rtl", 2}}
 	for _, l := range langs {
 		_, err = tx.Exec("INSERT OR IGNORE INTO languages(code,name,native_name,direction,sort_order) VALUES(?,?,?,?,?)", l.c, l.n, l.nn, l.d, l.o)
 		if err != nil {
 			return err
 		}
+	}
+	if _, err = tx.Exec("DELETE FROM languages WHERE code NOT IN ('en','fa')"); err != nil {
+		return err
 	}
 	rows, err := tx.Query("SELECT id,code FROM languages")
 	if err != nil {
@@ -169,32 +176,90 @@ func seedDemo(db *sql.DB) error {
 		ids[c] = id
 	}
 	rows.Close()
-	data := map[string][]string{"en": {"Alex Morgan", "Software Engineer", "I build useful, durable software.", "Product-minded engineer focused on Go and simple systems.", "Berlin, Germany"}, "de": {"Alex Morgan", "Softwareentwickler", "Ich entwickle langlebige, nützliche Software.", "Produktorientierter Entwickler mit Fokus auf Go und einfache Systeme.", "Berlin, Deutschland"}, "fa": {"الکس مورگان", "مهندس نرم‌افزار", "نرم‌افزارهای مفید و پایدار می‌سازم.", "مهندس محصول‌محور با تمرکز بر Go و سامانه‌های ساده.", "برلین، آلمان"}}
+	data := map[string][]string{
+		"en": {"Alex Morgan", "Senior Software Engineer", "I design calm, dependable products for complex problems.", "Product-minded software engineer with eight years of experience building web platforms, developer tools, and data-heavy products. I enjoy turning ambiguous requirements into simple systems that teams can maintain.", "Berlin, Germany"},
+		"de": {"Alex Morgan", "Senior Softwareentwickler", "Ich entwickle ruhige, verlässliche Produkte für komplexe Probleme.", "Produktorientierter Softwareentwickler mit acht Jahren Erfahrung in Webplattformen, Entwicklerwerkzeugen und datenintensiven Produkten. Komplexe Anforderungen verwandle ich gern in einfache, wartbare Systeme.", "Berlin, Deutschland"},
+		"fa": {"الکس مورگان", "مهندس ارشد نرم‌افزار", "برای مسائل پیچیده، محصولات ساده و قابل اعتماد می‌سازم.", "مهندس نرم‌افزار محصول‌محور با هشت سال تجربه در ساخت پلتفرم‌های وب، ابزارهای توسعه و محصولات داده‌محور. از تبدیل نیازهای مبهم به سامانه‌های ساده و قابل نگهداری لذت می‌برم.", "برلین، آلمان"},
+	}
 	for c, v := range data {
-		_, err = tx.Exec("INSERT OR REPLACE INTO profile_translations(profile_id,language_id,name,title,intro,about,email,location,meta_description) VALUES(1,?,?,?,?,?,?,?,?)", ids[c], v[0], v[1], v[2], v[3], "hello@example.com", v[4], v[2])
+		if ids[c] == 0 {
+			continue
+		}
+		_, err = tx.Exec("INSERT OR REPLACE INTO profile_translations(profile_id,language_id,name,title,intro,about,email,phone,location,meta_description) VALUES(1,?,?,?,?,?,?,?,?,?)", ids[c], v[0], v[1], v[2], v[3], "alex.morgan@example.com", "+49 30 555 0142", v[4], v[2])
 		if err != nil {
 			return err
 		}
 	}
-	var count int
-	tx.QueryRow("SELECT COUNT(*) FROM entries").Scan(&count)
-	if count == 0 {
-		res, err := tx.Exec("INSERT INTO entries(kind,start_date,end_date,current,technologies,sort_order) VALUES('experience','2022','',1,'Go, SQLite, TypeScript',10)")
-		if err != nil {
-			return err
+	if _, err = tx.Exec("UPDATE profile SET avatar='/uploads/mock-profile.png',updated_at=CURRENT_TIMESTAMP WHERE id=1"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("DELETE FROM entries"); err != nil {
+		return err
+	}
+	if _, err = tx.Exec("DELETE FROM social_links"); err != nil {
+		return err
+	}
+	type tr struct{ title, subtitle, location, description string }
+	add := func(kind, image, url, secondary, start, end string, current bool, proficiency, technologies string, order int, translations map[string]tr) error {
+		res, e := tx.Exec(`INSERT INTO entries(kind,image,url,secondary_url,start_date,end_date,current,proficiency,technologies,enabled,sort_order) VALUES(?,?,?,?,?,?,?,?,?,1,?)`, kind, image, url, secondary, start, end, current, proficiency, technologies, order)
+		if e != nil {
+			return e
 		}
 		id, _ := res.LastInsertId()
-		titles := map[string][]string{"en": {"Senior Software Engineer", "Acme Studio", "Building reliable products and leading platform work."}, "de": {"Senior Softwareentwickler", "Acme Studio", "Entwicklung zuverlässiger Produkte und Leitung der Plattformarbeit."}, "fa": {"مهندس ارشد نرم‌افزار", "استودیو اکمی", "ساخت محصولات پایدار و هدایت کارهای پلتفرم."}}
-		for c, v := range titles {
-			tx.Exec("INSERT INTO entry_translations(entry_id,language_id,title,subtitle,description) VALUES(?,?,?,?,?)", id, ids[c], v[0], v[1], v[2])
-		}
-		for i, s := range []string{"Go", "SQLite", "System Design"} {
-			res, _ = tx.Exec("INSERT INTO entries(kind,proficiency,sort_order) VALUES('skill','Advanced',?)", i*10)
-			sid, _ := res.LastInsertId()
-			for _, lid := range ids {
-				tx.Exec("INSERT INTO entry_translations(entry_id,language_id,title) VALUES(?,?,?)", sid, lid, s)
+		for code, t := range translations {
+			if ids[code] == 0 {
+				continue
+			}
+			if _, e = tx.Exec(`INSERT INTO entry_translations(entry_id,language_id,title,subtitle,location,description) VALUES(?,?,?,?,?,?)`, id, ids[code], t.title, t.subtitle, t.location, t.description); e != nil {
+				return e
 			}
 		}
+		return nil
+	}
+	entries := []struct {
+		kind, image, url, secondary, start, end string
+		current                                 bool
+		level, tech                             string
+		order                                   int
+		translations                            map[string]tr
+	}{
+		{"experience", "", "https://example.com", "", "2022-04", "", true, "", "Go, Kubernetes, PostgreSQL, TypeScript", 10, map[string]tr{"en": {"Senior Software Engineer", "Northstar Labs", "Berlin, Germany", "Lead a five-person platform team building workflow software used by 40,000+ professionals. Reduced API latency by 46%, introduced service ownership practices, and helped ship a new collaboration suite."}, "de": {"Senior Softwareentwickler", "Northstar Labs", "Berlin, Deutschland", "Leitung eines fünfköpfigen Plattformteams für Workflow-Software mit über 40.000 Nutzern. API-Latenz um 46 % reduziert und eine neue Kollaborationssuite eingeführt."}, "fa": {"مهندس ارشد نرم‌افزار", "آزمایشگاه نورث‌استار", "برلین، آلمان", "رهبری تیم پنج‌نفره پلتفرم برای ساخت نرم‌افزار گردش کار با بیش از ۴۰ هزار کاربر. کاهش ۴۶ درصدی تأخیر API و عرضه مجموعه جدید همکاری تیمی."}}},
+		{"experience", "", "https://example.com", "", "2019-01", "2022-03", false, "", "Go, React, Redis, AWS", 20, map[string]tr{"en": {"Software Engineer", "Fieldwork Systems", "Hamburg, Germany", "Built customer-facing analytics and internal developer tooling. Replaced a fragile batch pipeline with event-driven processing and cut failed imports by 70%."}, "de": {"Softwareentwickler", "Fieldwork Systems", "Hamburg, Deutschland", "Entwicklung von Analysefunktionen und internen Entwicklerwerkzeugen. Eine fehleranfällige Stapelverarbeitung wurde durch ereignisbasierte Verarbeitung ersetzt."}, "fa": {"مهندس نرم‌افزار", "فیلدورک سیستمز", "هامبورگ، آلمان", "ساخت تحلیل‌های کاربرمحور و ابزارهای داخلی توسعه. جایگزینی پردازش دسته‌ای با معماری رویدادمحور و کاهش ۷۰ درصدی خطاهای ورود داده."}}},
+		{"education", "", "https://www.tu.berlin", "", "2014", "2018", false, "", "Distributed Systems, Human–Computer Interaction", 10, map[string]tr{"en": {"B.Sc. Computer Science", "Technical University of Berlin", "Berlin, Germany", "Focused on distributed systems and human–computer interaction. Graduated with distinction and mentored first-year programming students."}, "de": {"B.Sc. Informatik", "Technische Universität Berlin", "Berlin, Deutschland", "Schwerpunkte verteilte Systeme und Mensch-Computer-Interaktion. Abschluss mit Auszeichnung."}, "fa": {"کارشناسی علوم کامپیوتر", "دانشگاه فنی برلین", "برلین، آلمان", "تمرکز بر سامانه‌های توزیع‌شده و تعامل انسان و رایانه؛ فارغ‌التحصیل با رتبه ممتاز."}}},
+		{"project", "/uploads/mock-project-pulseboard.png", "https://example.com/pulseboard", "https://github.com/example/pulseboard", "2024-01", "2024-08", false, "", "Go, HTMX, SQLite, WebSockets", 10, map[string]tr{"en": {"Pulseboard", "Open-source planning workspace", "", "A fast collaborative workspace for small product teams, featuring live updates, timeline planning, and privacy-friendly self-hosting."}, "de": {"Pulseboard", "Open-Source-Planungsbereich", "", "Ein schneller kollaborativer Arbeitsbereich mit Live-Updates, Zeitplanung und datenschutzfreundlichem Self-Hosting."}, "fa": {"پالس‌بورد", "فضای برنامه‌ریزی متن‌باز", "", "فضای کاری سریع برای تیم‌های محصول با به‌روزرسانی زنده، برنامه‌ریزی زمانی و میزبانی مستقل."}}},
+		{"project", "/uploads/mock-project-nestegg.png", "https://example.com/nestegg", "https://github.com/example/nestegg", "2023-03", "2023-11", false, "", "Go, React Native, PostgreSQL", 20, map[string]tr{"en": {"NestEgg", "Personal finance companion", "", "A privacy-first budgeting app that turns spending patterns into practical weekly suggestions without selling user data."}, "de": {"NestEgg", "Persönlicher Finanzbegleiter", "", "Eine datenschutzorientierte Budget-App, die Ausgabenmuster in praktische wöchentliche Empfehlungen verwandelt."}, "fa": {"نست‌اگ", "همراه مدیریت مالی شخصی", "", "برنامه بودجه‌بندی با حفظ حریم خصوصی که الگوهای هزینه را به پیشنهادهای هفتگی کاربردی تبدیل می‌کند."}}},
+		{"project", "", "https://example.com/gopulse", "https://github.com/example/gopulse", "2022-05", "2022-10", false, "", "Go, OpenTelemetry, Prometheus", 30, map[string]tr{"en": {"GoPulse", "Observability toolkit", "", "A compact observability starter kit for Go services with sensible tracing, metrics, health checks, and deployment defaults."}, "de": {"GoPulse", "Observability-Werkzeugkasten", "", "Ein kompakter Einstieg für Go-Dienste mit Tracing, Metriken, Health Checks und sinnvollen Standardwerten."}, "fa": {"گوپالس", "ابزار مشاهده‌پذیری", "", "مجموعه‌ای سبک برای سرویس‌های Go شامل رهگیری، معیارها، بررسی سلامت و تنظیمات مناسب استقرار."}}},
+		{"certification", "", "https://www.cncf.io/certification/cka/", "", "2023-06", "", false, "", "", 10, map[string]tr{"en": {"Certified Kubernetes Administrator", "Cloud Native Computing Foundation", "", "Hands-on certification covering Kubernetes administration, troubleshooting, networking, and security."}, "de": {"Certified Kubernetes Administrator", "Cloud Native Computing Foundation", "", "Praxiszertifizierung für Kubernetes-Administration, Fehlersuche, Netzwerk und Sicherheit."}, "fa": {"مدیر تأییدشده کوبرنتیز", "بنیاد رایانش ابری بومی", "", "گواهی عملی مدیریت، عیب‌یابی، شبکه و امنیت کوبرنتیز."}}},
+		{"certification", "", "https://www.linuxfoundation.org", "", "2021-09", "", false, "", "", 20, map[string]tr{"en": {"Linux Foundation Certified Engineer", "The Linux Foundation", "", "Advanced Linux networking, service operation, storage, and systems troubleshooting."}, "de": {"Linux Foundation Certified Engineer", "The Linux Foundation", "", "Fortgeschrittene Linux-Netzwerke, Dienste, Speicher und Systemdiagnose."}, "fa": {"مهندس تأییدشده بنیاد لینوکس", "بنیاد لینوکس", "", "شبکه، سرویس‌ها، ذخیره‌سازی و عیب‌یابی پیشرفته لینوکس."}}},
+	}
+	for _, e := range entries {
+		if err = add(e.kind, e.image, e.url, e.secondary, e.start, e.end, e.current, e.level, e.tech, e.order, e.translations); err != nil {
+			return err
+		}
+	}
+	for i, s := range []struct{ name, level string }{{"Go", "Expert"}, {"System Design", "Advanced"}, {"SQLite & PostgreSQL", "Advanced"}, {"TypeScript", "Advanced"}, {"Kubernetes", "Advanced"}, {"Product Discovery", "Proficient"}} {
+		translations := map[string]tr{}
+		for code := range ids {
+			translations[code] = tr{title: s.name}
+		}
+		if err = add("skill", "", "", "", "", "", false, s.level, "", (i+1)*10, translations); err != nil {
+			return err
+		}
+	}
+	spoken := []struct{ en, fa, level string }{{"English", "انگلیسی", "Native"}, {"Persian", "فارسی", "Conversational"}}
+	for i, s := range spoken {
+		if err = add("language", "", "", "", "", "", false, s.level, "", (i+1)*10, map[string]tr{"en": {title: s.en}, "fa": {title: s.fa}}); err != nil {
+			return err
+		}
+	}
+	socials := [][]any{{"GitHub", "https://github.com/example", "GH", 1, 10}, {"LinkedIn", "https://www.linkedin.com/in/example", "in", 1, 20}, {"Personal blog", "https://example.com/writing", "↗", 1, 30}}
+	for _, s := range socials {
+		if _, err = tx.Exec("INSERT INTO social_links(label,url,icon,enabled,sort_order) VALUES(?,?,?,?,?)", s...); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec("INSERT INTO settings(key,value) VALUES('demo_seed_version','3') ON CONFLICT(key) DO UPDATE SET value='3'"); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
