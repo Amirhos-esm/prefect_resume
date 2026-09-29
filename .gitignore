@@ -1,0 +1,10 @@
+/data/*.db*
+/uploads/*
+!/uploads/.gitkeep
+/.env
+/resume
+/resume.exe
+/*.exe
+/resume.db
+/verify-*.txt
+/verify-*.html
