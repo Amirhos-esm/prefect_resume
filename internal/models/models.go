@@ -32,5 +32,10 @@ type Resume struct {
 }
 type Dashboard struct {
 	Languages, Experiences, Education, Projects, Skills int
+	PageViews, PDFDownloads                             int
 	WebsiteTemplate, PDFTemplate                        string
+}
+type VisitorEvent struct {
+	ID                                                                   int64
+	EventType, Language, Path, IPAddress, UserAgent, Referrer, CreatedAt string
 }

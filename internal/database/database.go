@@ -22,13 +22,16 @@ CREATE TABLE IF NOT EXISTS profile_translations(profile_id INTEGER NOT NULL REFE
 CREATE TABLE IF NOT EXISTS entries(id INTEGER PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('experience','education','skill','project','certification','language')), image TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', secondary_url TEXT NOT NULL DEFAULT '', start_date TEXT NOT NULL DEFAULT '', end_date TEXT NOT NULL DEFAULT '', current INTEGER NOT NULL DEFAULT 0, proficiency TEXT NOT NULL DEFAULT '', technologies TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS entry_translations(entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE, language_id INTEGER NOT NULL REFERENCES languages(id) ON DELETE CASCADE, title TEXT NOT NULL DEFAULT '', subtitle TEXT NOT NULL DEFAULT '', location TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', extra TEXT NOT NULL DEFAULT '', PRIMARY KEY(entry_id,language_id));
 CREATE TABLE IF NOT EXISTS social_links(id INTEGER PRIMARY KEY, label TEXT NOT NULL, url TEXT NOT NULL, icon TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS visit_events(id INTEGER PRIMARY KEY, event_type TEXT NOT NULL CHECK(event_type IN ('page_view','resume_pdf')), language_code TEXT NOT NULL DEFAULT '', path TEXT NOT NULL DEFAULT '', ip_address TEXT NOT NULL DEFAULT '', user_agent TEXT NOT NULL DEFAULT '', referrer TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_entries_kind_order ON entries(kind,enabled,sort_order);
 CREATE INDEX IF NOT EXISTS idx_entry_translations_language ON entry_translations(language_id);
+CREATE INDEX IF NOT EXISTS idx_visit_events_created ON visit_events(created_at DESC);
 INSERT OR IGNORE INTO profile(id) VALUES(1);
 INSERT OR IGNORE INTO settings(key,value) VALUES('website_template','modern');
 INSERT OR IGNORE INTO settings(key,value) VALUES('pdf_template','professional');
 INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(1,CURRENT_TIMESTAMP);
+INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(2,CURRENT_TIMESTAMP);
 `
 
 func Open(path string) (*sql.DB, error) {

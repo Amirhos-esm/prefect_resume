@@ -1,6 +1,7 @@
 package application
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -17,6 +18,7 @@ import (
 	"io"
 	"log"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -25,6 +27,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/microcosm-cc/bluemonday"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
 	"golang.org/x/crypto/bcrypt"
 	"resume/internal/database"
 	"resume/internal/models"
@@ -50,7 +55,23 @@ type AdminPage struct {
 	Resume                             models.Resume
 	Edit                               *models.Entry
 	Dashboard                          models.Dashboard
+	Events                             []models.VisitorEvent
+	AnalyticsPage, AnalyticsPages      int
+	AnalyticsPrev, AnalyticsNext       int
+	AnalyticsTotal                     int
+	AnalyticsHasPrev, AnalyticsHasNext bool
 	WebsiteTemplate, PDFTemplate       string
+}
+
+var markdownRenderer = goldmark.New(goldmark.WithExtensions(extension.GFM))
+var markdownPolicy = bluemonday.UGCPolicy()
+
+func richText(value string) template.HTML {
+	var rendered bytes.Buffer
+	if err := markdownRenderer.Convert([]byte(value), &rendered); err != nil {
+		return template.HTML(template.HTMLEscapeString(value))
+	}
+	return template.HTML(markdownPolicy.SanitizeBytes(rendered.Bytes()))
 }
 
 func env(k, d string) string {
@@ -95,7 +116,7 @@ func Run(args []string) error {
 	if err = os.MkdirAll(cfg.UploadPath, 0755); err != nil {
 		return err
 	}
-	funcs := template.FuncMap{"section": func(m map[string][]models.Entry, k string) []models.Entry { return m[k] }, "dateRange": dateRange, "checked": func(v bool) string {
+	funcs := template.FuncMap{"rich": richText, "section": func(m map[string][]models.Entry, k string) []models.Entry { return m[k] }, "dateRange": dateRange, "checked": func(v bool) string {
 		if v {
 			return "checked"
 		}
@@ -282,7 +303,7 @@ func (a *App) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'unsafe-inline'; img-src 'self' data:; form-action 'self'; frame-ancestors 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; form-action 'self'; frame-ancestors 'self'")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -408,6 +429,7 @@ func (a *App) public(w http.ResponseWriter, r *http.Request) {
 		a.notFound(w)
 		return
 	}
+	a.recordVisit(r, "page_view", lang.Code)
 	resume, err := database.LoadResume(a.db, lang, a.cfg.BaseURL, false)
 	if err != nil {
 		a.internal(w, err)
@@ -431,6 +453,7 @@ func (a *App) publicPDF(w http.ResponseWriter, r *http.Request, code string) {
 		a.notFound(w)
 		return
 	}
+	a.recordVisit(r, "resume_pdf", lang.Code)
 	resume, err := database.LoadResume(a.db, lang, a.cfg.BaseURL, false)
 	if err != nil {
 		a.internal(w, err)
@@ -482,6 +505,14 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request) {
 	page.WebsiteTemplate = database.Setting(a.db, "website_template")
 	page.PDFTemplate = database.Setting(a.db, "pdf_template")
 	page.Dashboard = a.dashboard()
+	if page.Section == "analytics" {
+		requested, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		page.Events, page.AnalyticsTotal, page.AnalyticsPage, page.AnalyticsPages = a.analytics(requested, 25)
+		page.AnalyticsHasPrev = page.AnalyticsPage > 1
+		page.AnalyticsHasNext = page.AnalyticsPage < page.AnalyticsPages
+		page.AnalyticsPrev = page.AnalyticsPage - 1
+		page.AnalyticsNext = page.AnalyticsPage + 1
+	}
 	if id, _ := strconv.ParseInt(r.URL.Query().Get("edit"), 10, 64); id > 0 {
 		page.Edit = a.entryForEdit(id, selected.ID)
 	}
@@ -495,7 +526,69 @@ func (a *App) dashboard() models.Dashboard {
 	}
 	d.WebsiteTemplate = database.Setting(a.db, "website_template")
 	d.PDFTemplate = database.Setting(a.db, "pdf_template")
+	a.db.QueryRow("SELECT COUNT(*) FROM visit_events WHERE event_type='page_view'").Scan(&d.PageViews)
+	a.db.QueryRow("SELECT COUNT(*) FROM visit_events WHERE event_type='resume_pdf'").Scan(&d.PDFDownloads)
 	return d
+}
+
+func (a *App) analytics(requestedPage, pageSize int) ([]models.VisitorEvent, int, int, int) {
+	var total int
+	if err := a.db.QueryRow("SELECT COUNT(*) FROM visit_events").Scan(&total); err != nil {
+		return nil, 0, 1, 1
+	}
+	page, pages := pagination(total, requestedPage, pageSize)
+	rows, err := a.db.Query(`SELECT id,event_type,language_code,path,ip_address,user_agent,referrer,created_at FROM visit_events ORDER BY id DESC LIMIT ? OFFSET ?`, pageSize, (page-1)*pageSize)
+	if err != nil {
+		return nil, total, page, pages
+	}
+	defer rows.Close()
+	var events []models.VisitorEvent
+	for rows.Next() {
+		var e models.VisitorEvent
+		if rows.Scan(&e.ID, &e.EventType, &e.Language, &e.Path, &e.IPAddress, &e.UserAgent, &e.Referrer, &e.CreatedAt) == nil {
+			events = append(events, e)
+		}
+	}
+	return events, total, page, pages
+}
+
+func pagination(total, requested, pageSize int) (page, pages int) {
+	if pageSize < 1 {
+		pageSize = 25
+	}
+	pages = (total + pageSize - 1) / pageSize
+	if pages < 1 {
+		pages = 1
+	}
+	page = requested
+	if page < 1 {
+		page = 1
+	}
+	if page > pages {
+		page = pages
+	}
+	return
+}
+
+func (a *App) recordVisit(r *http.Request, eventType, language string) {
+	if r.Method != http.MethodGet {
+		return
+	}
+	ip := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		ip = host
+	}
+	_, err := a.db.Exec(`INSERT INTO visit_events(event_type,language_code,path,ip_address,user_agent,referrer) VALUES(?,?,?,?,?,?)`, eventType, language, limitText(r.URL.Path, 300), limitText(ip, 64), limitText(r.UserAgent(), 500), limitText(r.Referer(), 500))
+	if err != nil {
+		a.logger.Printf("record visit: %v", err)
+	}
+}
+func limitText(value string, max int) string {
+	r := []rune(value)
+	if len(r) > max {
+		return string(r[:max])
+	}
+	return value
 }
 func (a *App) entryForEdit(id, langID int64) *models.Entry {
 	var e models.Entry
@@ -521,8 +614,12 @@ func (a *App) adminPost(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "profile":
 		err = a.saveProfile(r)
+	case "remove-profile-image":
+		_, err = a.db.Exec("UPDATE profile SET avatar='',updated_at=CURRENT_TIMESTAMP WHERE id=1")
 	case "entry":
 		err = a.saveEntry(r)
+	case "remove-entry-image":
+		_, err = a.db.Exec("UPDATE entries SET image='',updated_at=CURRENT_TIMESTAMP WHERE id=?", r.FormValue("id"))
 	case "delete-entry":
 		_, err = a.db.Exec("DELETE FROM entries WHERE id=?", r.FormValue("id"))
 	case "language":
@@ -535,6 +632,8 @@ func (a *App) adminPost(w http.ResponseWriter, r *http.Request) {
 		_, err = a.db.Exec("DELETE FROM social_links WHERE id=?", r.FormValue("id"))
 	case "settings":
 		err = a.saveSettings(r)
+	case "clear-analytics":
+		_, err = a.db.Exec("DELETE FROM visit_events")
 	default:
 		a.badRequest(w)
 		return
@@ -556,6 +655,9 @@ func (a *App) saveProfile(r *http.Request) error {
 	}
 	avatar := ""
 	_ = a.db.QueryRow("SELECT avatar FROM profile WHERE id=1").Scan(&avatar)
+	if r.FormValue("remove_image") == "1" {
+		avatar = ""
+	}
 	if f, h, e := r.FormFile("image"); e == nil {
 		defer f.Close()
 		avatar, err = a.saveImage(f, h)
@@ -585,6 +687,9 @@ func (a *App) saveEntry(r *http.Request) error {
 		return errors.New("invalid entry")
 	}
 	image := r.FormValue("existing_image")
+	if r.FormValue("remove_image") == "1" {
+		image = ""
+	}
 	var err error
 	if f, h, e := r.FormFile("image"); e == nil {
 		defer f.Close()

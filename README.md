@@ -5,7 +5,7 @@ Resume Studio is a single-process Go resume/CV application with a public multili
 ## Requirements
 
 - Go 1.22+
-- A Unicode TrueType font for non-Latin PDFs. Arial/Tahoma on Windows and DejaVu Sans on common Linux distributions are detected automatically.
+- No external font is required for Persian PDFs: the OFL-licensed Vazirmatn font is embedded in the application. Arial/Tahoma on Windows and DejaVu Sans on common Linux distributions are detected for other Unicode output.
 
 ## Fresh installation
 
@@ -45,6 +45,10 @@ Environment variables are not automatically loaded from `.env`; export them in y
 - `/robots.txt` and `/sitemap.xml` provide basic search-engine metadata.
 
 Languages are data, not code: add a code, display names, text direction, and translations in the admin panel. Shared fields such as dates, images, URLs, ordering, and visibility remain attached to one core record while each language stores only translated text.
+
+Text areas for introductions, biographies, and record descriptions support sanitized Markdown. The editor toolbar can insert bold, italic, links, and lists. Raw HTML is not trusted or rendered directly.
+
+The **Visitors & downloads** admin page shows the latest 200 public page and PDF requests, including timestamp, language, direct connection IP, path, referrer, and user agent. Data remains in the local SQLite database and can be cleared from the admin panel. When deploying publicly, mention this logging in your privacy notice and define an appropriate retention policy.
 
 ## Data and security
 
