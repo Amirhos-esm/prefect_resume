@@ -8,6 +8,7 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+	"resume/internal/calendars"
 	"resume/internal/models"
 )
 
@@ -16,7 +17,7 @@ PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, username TEXT NOT NULL UNIQUE COLLATE NOCASE, email TEXT UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS sessions(id_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, csrf_token TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS languages(id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE COLLATE NOCASE, name TEXT NOT NULL, native_name TEXT NOT NULL, direction TEXT NOT NULL CHECK(direction IN ('ltr','rtl')), enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS languages(id INTEGER PRIMARY KEY, code TEXT NOT NULL UNIQUE COLLATE NOCASE, name TEXT NOT NULL, native_name TEXT NOT NULL, direction TEXT NOT NULL CHECK(direction IN ('ltr','rtl')), calendar TEXT NOT NULL DEFAULT 'gregorian' CHECK(calendar IN ('gregorian','shamsi')), enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS profile(id INTEGER PRIMARY KEY CHECK(id=1), avatar TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS profile_translations(profile_id INTEGER NOT NULL REFERENCES profile(id) ON DELETE CASCADE, language_id INTEGER NOT NULL REFERENCES languages(id) ON DELETE CASCADE, name TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '', intro TEXT NOT NULL DEFAULT '', about TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', location TEXT NOT NULL DEFAULT '', meta_description TEXT NOT NULL DEFAULT '', PRIMARY KEY(profile_id,language_id));
 CREATE TABLE IF NOT EXISTS entries(id INTEGER PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('experience','education','skill','project','certification','language')), image TEXT NOT NULL DEFAULT '', url TEXT NOT NULL DEFAULT '', secondary_url TEXT NOT NULL DEFAULT '', start_date TEXT NOT NULL DEFAULT '', end_date TEXT NOT NULL DEFAULT '', current INTEGER NOT NULL DEFAULT 0, proficiency TEXT NOT NULL DEFAULT '', technologies TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
@@ -47,7 +48,41 @@ func Open(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err = ensureLanguageCalendar(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate language calendar: %w", err)
+	}
 	return db, nil
+}
+
+func ensureLanguageCalendar(db *sql.DB) error {
+	rows, err := db.Query("PRAGMA table_info(languages)")
+	if err != nil {
+		return err
+	}
+	hasCalendar := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, dataType string
+		var defaultValue any
+		if err = rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return err
+		}
+		if name == "calendar" {
+			hasCalendar = true
+		}
+	}
+	if err = rows.Close(); err != nil {
+		return err
+	}
+	if !hasCalendar {
+		if _, err = db.Exec("ALTER TABLE languages ADD COLUMN calendar TEXT NOT NULL DEFAULT 'gregorian' CHECK(calendar IN ('gregorian','shamsi'))"); err != nil {
+			return err
+		}
+	}
+	_, err = db.Exec("INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(3,CURRENT_TIMESTAMP)")
+	return err
 }
 
 func Setting(db *sql.DB, key string) string {
@@ -61,7 +96,7 @@ func SetSetting(db *sql.DB, key, value string) error {
 }
 func EnabledLanguages(db *sql.DB) ([]models.Language, error) { return Languages(db, true) }
 func Languages(db *sql.DB, enabledOnly bool) ([]models.Language, error) {
-	q := "SELECT id,code,name,native_name,direction,enabled,sort_order FROM languages"
+	q := "SELECT id,code,name,native_name,direction,calendar,enabled,sort_order FROM languages"
 	if enabledOnly {
 		q += " WHERE enabled=1"
 	}
@@ -74,7 +109,7 @@ func Languages(db *sql.DB, enabledOnly bool) ([]models.Language, error) {
 	var out []models.Language
 	for rows.Next() {
 		var x models.Language
-		if err = rows.Scan(&x.ID, &x.Code, &x.Name, &x.NativeName, &x.Direction, &x.Enabled, &x.SortOrder); err != nil {
+		if err = rows.Scan(&x.ID, &x.Code, &x.Name, &x.NativeName, &x.Direction, &x.Calendar, &x.Enabled, &x.SortOrder); err != nil {
 			return nil, err
 		}
 		out = append(out, x)
@@ -83,11 +118,11 @@ func Languages(db *sql.DB, enabledOnly bool) ([]models.Language, error) {
 }
 func LanguageByCode(db *sql.DB, code string, includeDisabled bool) (models.Language, error) {
 	var x models.Language
-	q := "SELECT id,code,name,native_name,direction,enabled,sort_order FROM languages WHERE code=?"
+	q := "SELECT id,code,name,native_name,direction,calendar,enabled,sort_order FROM languages WHERE code=?"
 	if !includeDisabled {
 		q += " AND enabled=1"
 	}
-	err := db.QueryRow(q, code).Scan(&x.ID, &x.Code, &x.Name, &x.NativeName, &x.Direction, &x.Enabled, &x.SortOrder)
+	err := db.QueryRow(q, code).Scan(&x.ID, &x.Code, &x.Name, &x.NativeName, &x.Direction, &x.Calendar, &x.Enabled, &x.SortOrder)
 	return x, err
 }
 func LoadResume(db *sql.DB, lang models.Language, baseURL string, includeDisabled bool) (models.Resume, error) {
@@ -111,6 +146,8 @@ func LoadResume(db *sql.DB, lang models.Language, baseURL string, includeDisable
 		if err = rows.Scan(&e.ID, &e.Kind, &e.Image, &e.URL, &e.SecondaryURL, &e.StartDate, &e.EndDate, &e.Current, &e.Proficiency, &e.Technologies, &e.Enabled, &e.SortOrder, &e.Title, &e.Subtitle, &e.Location, &e.Description, &e.Extra); err != nil {
 			return r, err
 		}
+		e.DisplayStartDate = calendars.Format(e.StartDate, lang.Calendar)
+		e.DisplayEndDate = calendars.Format(e.EndDate, lang.Calendar)
 		r.Entries[e.Kind] = append(r.Entries[e.Kind], e)
 	}
 	sq := "SELECT id,label,url,icon,enabled,sort_order FROM social_links"

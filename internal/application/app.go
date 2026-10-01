@@ -31,6 +31,7 @@ import (
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
 	"golang.org/x/crypto/bcrypt"
+	"resume/internal/calendars"
 	"resume/internal/database"
 	"resume/internal/models"
 	pdfservice "resume/internal/pdf"
@@ -181,6 +182,9 @@ func seedDemo(db *sql.DB) error {
 		if err != nil {
 			return err
 		}
+	}
+	if _, err = tx.Exec("UPDATE languages SET calendar='shamsi' WHERE code='fa'"); err != nil {
+		return err
 	}
 	if _, err = tx.Exec("DELETE FROM languages WHERE code NOT IN ('en','fa')"); err != nil {
 		return err
@@ -734,16 +738,17 @@ func (a *App) saveLanguage(r *http.Request) error {
 	id, _ := strconv.ParseInt(r.FormValue("id"), 10, 64)
 	code := strings.ToLower(strings.TrimSpace(r.FormValue("code")))
 	dir := r.FormValue("direction")
-	if code == "" || (dir != "ltr" && dir != "rtl") {
+	calendar := strings.ToLower(strings.TrimSpace(r.FormValue("calendar")))
+	if code == "" || (dir != "ltr" && dir != "rtl") || !calendars.Valid(calendar) {
 		return errors.New("invalid language")
 	}
 	order, _ := strconv.Atoi(r.FormValue("sort_order"))
 	enabled := r.FormValue("enabled") == "1"
 	if id == 0 {
-		_, err := a.db.Exec("INSERT INTO languages(code,name,native_name,direction,enabled,sort_order) VALUES(?,?,?,?,?,?)", code, r.FormValue("name"), r.FormValue("native_name"), dir, enabled, order)
+		_, err := a.db.Exec("INSERT INTO languages(code,name,native_name,direction,calendar,enabled,sort_order) VALUES(?,?,?,?,?,?,?)", code, r.FormValue("name"), r.FormValue("native_name"), dir, calendar, enabled, order)
 		return err
 	}
-	_, err := a.db.Exec("UPDATE languages SET code=?,name=?,native_name=?,direction=?,enabled=?,sort_order=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", code, r.FormValue("name"), r.FormValue("native_name"), dir, enabled, order, id)
+	_, err := a.db.Exec("UPDATE languages SET code=?,name=?,native_name=?,direction=?,calendar=?,enabled=?,sort_order=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", code, r.FormValue("name"), r.FormValue("native_name"), dir, calendar, enabled, order, id)
 	return err
 }
 func (a *App) saveSocial(r *http.Request) error {
@@ -807,16 +812,28 @@ func (a *App) saveImage(f multipart.File, h *multipart.FileHeader) (string, erro
 }
 
 func dateRange(e models.Entry) string {
+	start, end := displayDates(e)
 	if e.Current {
-		if e.StartDate != "" {
-			return e.StartDate + " — Present"
+		if start != "" {
+			return start + " — Present"
 		}
 		return "Present"
 	}
-	if e.StartDate != "" && e.EndDate != "" {
-		return e.StartDate + " — " + e.EndDate
+	if start != "" && end != "" {
+		return start + " — " + end
 	}
-	return e.StartDate + e.EndDate
+	return start + end
+}
+
+func displayDates(e models.Entry) (string, string) {
+	start, end := e.DisplayStartDate, e.DisplayEndDate
+	if start == "" {
+		start = e.StartDate
+	}
+	if end == "" {
+		end = e.EndDate
+	}
+	return start, end
 }
 func (a *App) robots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")

@@ -72,3 +72,15 @@ func TestPagination(t *testing.T) {
 		}
 	}
 }
+
+func TestDateRangeUsesCalendarDisplayDates(t *testing.T) {
+	entry := models.Entry{
+		StartDate:        "2024-03-20",
+		EndDate:          "2025-03-20",
+		DisplayStartDate: "1403/01/01",
+		DisplayEndDate:   "1404/01/01",
+	}
+	if got := dateRange(entry); got != "1403/01/01 — 1404/01/01" {
+		t.Fatalf("dateRange() = %q", got)
+	}
+}

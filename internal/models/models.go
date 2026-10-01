@@ -1,21 +1,21 @@
 package models
 
 type Language struct {
-	ID                                int64
-	Code, Name, NativeName, Direction string
-	Enabled                           bool
-	SortOrder                         int
+	ID                                          int64
+	Code, Name, NativeName, Direction, Calendar string
+	Enabled                                     bool
+	SortOrder                                   int
 }
 type Profile struct {
 	Avatar                                                             string
 	Name, Title, Intro, About, Email, Phone, Location, MetaDescription string
 }
 type Entry struct {
-	ID                                                                            int64
-	Kind, Image, URL, SecondaryURL, StartDate, EndDate, Proficiency, Technologies string
-	Current, Enabled                                                              bool
-	SortOrder                                                                     int
-	Title, Subtitle, Location, Description, Extra                                 string
+	ID                                                                                                              int64
+	Kind, Image, URL, SecondaryURL, StartDate, EndDate, DisplayStartDate, DisplayEndDate, Proficiency, Technologies string
+	Current, Enabled                                                                                                bool
+	SortOrder                                                                                                       int
+	Title, Subtitle, Location, Description, Extra                                                                   string
 }
 type Social struct {
 	ID               int64

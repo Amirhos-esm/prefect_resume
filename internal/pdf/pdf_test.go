@@ -32,3 +32,25 @@ func TestPersianPDFUsesEmbeddedFont(t *testing.T) {
 		t.Fatal("output is not a PDF")
 	}
 }
+
+func TestPDFIncludesClickableSocialLinks(t *testing.T) {
+	r := models.Resume{
+		Language: models.Language{Code: "en", Direction: "ltr"},
+		Profile:  models.Profile{Name: "Alex Morgan"},
+		Entries:  map[string][]models.Entry{},
+		Socials: []models.Social{
+			{Label: "GitHub", URL: "https://github.com/example", Enabled: true},
+			{Label: "Hidden", URL: "https://example.com/hidden", Enabled: false},
+		},
+	}
+	var out bytes.Buffer
+	if err := Write(&out, r, "", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("https://github.com/example")) {
+		t.Fatal("enabled social URL is missing from PDF hyperlink annotations")
+	}
+	if bytes.Contains(out.Bytes(), []byte("https://example.com/hidden")) {
+		t.Fatal("disabled social URL was included in PDF")
+	}
+}

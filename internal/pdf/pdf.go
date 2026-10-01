@@ -57,6 +57,7 @@ func Write(w io.Writer, r models.Resume, fontPath, uploadPath string) error {
 	p.CellFormat(0, 10, visual(r.Profile.Name, r), "", 1, align(r), false, 0, "")
 	p.SetFont(family, "", 12)
 	p.CellFormat(0, 7, visual(r.Profile.Title, r), "", 1, align(r), false, 0, "")
+	socialLinks(p, family, r, modern)
 	if modern {
 		p.SetTextColor(35, 43, 40)
 		p.SetY(50)
@@ -133,6 +134,88 @@ func body(p *fpdf.Fpdf, font, text string, r models.Resume) {
 	multiline(p, text, 5, r)
 }
 
+func socialLinks(p *fpdf.Fpdf, font string, r models.Resume, modern bool) {
+	type link struct{ label, url string }
+	var links []link
+	for _, social := range r.Socials {
+		label, url := strings.TrimSpace(social.Label), strings.TrimSpace(social.URL)
+		if !social.Enabled || label == "" || url == "" {
+			continue
+		}
+		links = append(links, link{visual(label, r), url})
+	}
+	if len(links) == 0 {
+		return
+	}
+	if isRTL(r) {
+		for left, right := 0, len(links)-1; left < right; left, right = left+1, right-1 {
+			links[left], links[right] = links[right], links[left]
+		}
+	}
+
+	fontSize := 9.0
+	p.SetFont(font, "", fontSize)
+	separator := "  \u00b7  "
+	pageWidth, _ := p.GetPageSize()
+	left, _, right, _ := p.GetMargins()
+	maxWidth := pageWidth - left - right
+	if r.Profile.Avatar != "" {
+		maxWidth -= 34
+	}
+	rowWidth := func() float64 {
+		width := 0.0
+		for index, item := range links {
+			if index > 0 {
+				width += p.GetStringWidth(separator)
+			}
+			width += p.GetStringWidth(item.label)
+		}
+		return width
+	}
+	for rowWidth() > maxWidth && fontSize > 7 {
+		fontSize--
+		p.SetFont(font, "", fontSize)
+	}
+	if rowWidth() > maxWidth {
+		labelWidth := (maxWidth - float64(len(links)-1)*p.GetStringWidth(separator)) / float64(len(links))
+		for index := range links {
+			links[index].label = fitText(p, links[index].label, labelWidth)
+		}
+	}
+	totalWidth := rowWidth()
+	if isRTL(r) {
+		p.SetX(pageWidth - right - totalWidth)
+	} else {
+		p.SetX(left)
+	}
+	if modern {
+		p.SetTextColor(210, 235, 226)
+	} else {
+		p.SetTextColor(50, 100, 83)
+	}
+	for index, item := range links {
+		if index > 0 {
+			p.CellFormat(p.GetStringWidth(separator), 5, separator, "", 0, "L", false, 0, "")
+		}
+		p.CellFormat(p.GetStringWidth(item.label), 5, item.label, "", 0, "L", false, 0, item.url)
+	}
+	p.Ln(5)
+	if !modern {
+		p.SetTextColor(35, 43, 40)
+	}
+}
+
+func fitText(p *fpdf.Fpdf, value string, maxWidth float64) string {
+	if p.GetStringWidth(value) <= maxWidth {
+		return value
+	}
+	runes := []rune(value)
+	for len(runes) > 0 && p.GetStringWidth(string(runes)+"...") > maxWidth {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes) + "..."
+}
+
 // multiline wraps logical Persian text first and shapes/reorders each visual
 // line separately. Reordering a whole paragraph before wrapping would place
 // the final words on the first rendered line.
@@ -193,16 +276,23 @@ func sectionTitle(kind string, r models.Resume) string {
 	return map[string]string{"about": "About", "experience": "Experience", "education": "Education", "skill": "Skills", "project": "Projects", "certification": "Certifications", "language": "Languages"}[kind]
 }
 func dateRange(e models.Entry, r models.Resume) string {
+	start, end := e.DisplayStartDate, e.DisplayEndDate
+	if start == "" {
+		start = e.StartDate
+	}
+	if end == "" {
+		end = e.EndDate
+	}
 	if e.Current {
 		if isRTL(r) {
-			return strings.TrimSpace(e.StartDate + " — اکنون")
+			return strings.TrimSpace(start + " — اکنون")
 		}
-		return strings.TrimSpace(e.StartDate + " — Present")
+		return strings.TrimSpace(start + " — Present")
 	}
-	if e.StartDate != "" && e.EndDate != "" {
-		return e.StartDate + " — " + e.EndDate
+	if start != "" && end != "" {
+		return start + " — " + end
 	}
-	return e.StartDate + e.EndDate
+	return start + end
 }
 func joinNonEmpty(sep string, values ...string) string {
 	var out []string
