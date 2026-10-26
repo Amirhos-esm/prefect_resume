@@ -21,6 +21,9 @@ import (
 var vazirmatn []byte
 
 func Write(w io.Writer, r models.Resume, fontPath, uploadPath string) error {
+	if r.PDFTemplate == "sidebar" {
+		return writeSidebar(w, r, fontPath, uploadPath)
+	}
 	p := fpdf.New("P", "mm", "A4", "")
 	p.SetMargins(18, 16, 18)
 	p.SetAutoPageBreak(true, 16)

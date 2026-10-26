@@ -767,7 +767,7 @@ func (a *App) saveSettings(r *http.Request) error {
 	if site != "modern" && site != "professional" {
 		return errors.New("invalid website template")
 	}
-	if pdf != "modern" && pdf != "professional" {
+	if pdf != "modern" && pdf != "professional" && pdf != "sidebar" {
 		return errors.New("invalid PDF template")
 	}
 	if err := database.SetSetting(a.db, "website_template", site); err != nil {

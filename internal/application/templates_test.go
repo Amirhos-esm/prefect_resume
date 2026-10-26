@@ -2,9 +2,13 @@ package application
 
 import (
 	"html/template"
+	"net/http/httptest"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"resume/internal/database"
 	"resume/internal/models"
 	"resume/web"
 )
@@ -82,5 +86,22 @@ func TestDateRangeUsesCalendarDisplayDates(t *testing.T) {
 	}
 	if got := dateRange(entry); got != "1403/01/01 — 1404/01/01" {
 		t.Fatalf("dateRange() = %q", got)
+	}
+}
+
+func TestSaveSettingsAcceptsSidebarPDFTemplate(t *testing.T) {
+	db, err := database.Open(filepath.Join(t.TempDir(), "resume.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	form := url.Values{"website_template": {"modern"}, "pdf_template": {"sidebar"}}
+	request := httptest.NewRequest("POST", "/admin/templates", strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if err = (&App{db: db}).saveSettings(request); err != nil {
+		t.Fatal(err)
+	}
+	if got := database.Setting(db, "pdf_template"); got != "sidebar" {
+		t.Fatalf("pdf_template = %q, want sidebar", got)
 	}
 }
